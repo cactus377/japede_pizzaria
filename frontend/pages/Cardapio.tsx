@@ -199,9 +199,11 @@ export default function Cardapio() {
     setCart([]);
   }
 
+  const isPublic = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('public') === '1';
+
   const handleShare = async () => {
-    // Reconstruct the URL to ensure it's absolute and valid for the Web Share API.
-    const url = `${window.location.origin}${window.location.pathname}${window.location.hash || ''}`;
+    // Compartilhar link público do cardápio
+    const url = `${window.location.origin}${window.location.pathname}?public=1${window.location.hash || ''}`;
     
     const shareData = {
         title: 'Confira nosso Cardápio!',
@@ -283,21 +285,23 @@ export default function Cardapio() {
         )}
       </div>
 
-      <div className="fixed bottom-6 right-6 z-30 flex flex-col gap-4">
-          <button onClick={handleShare} className="flex items-center justify-center w-14 h-14 bg-blue-500 text-white font-bold rounded-full shadow-2xl pizza-shadow transform hover:scale-105 transition-transform" title="Compartilhar Cardápio">
-              <Icon name="share-2" className="w-6 h-6"/>
-          </button>
-           {cartItemCount > 0 && (
-              <button onClick={() => setShowCart(true)} className="flex items-center justify-center w-14 h-14 bg-red-600 text-white font-bold rounded-full shadow-2xl pizza-shadow transform hover:scale-105 transition-transform" title={`Ver Pedido (${cartItemCount} itens)`}>
-                  <Icon name="shopping-cart" className="w-6 h-6"/>
-                  <span className="absolute -top-1 -right-1 bg-white text-red-600 px-2 py-0.5 rounded-full text-xs font-bold">{cartItemCount}</span>
-              </button>
-          )}
-      </div>
+      {!isPublic && (
+        <div className="fixed bottom-6 right-6 z-30 flex flex-col gap-4">
+            <button onClick={handleShare} className="flex items-center justify-center w-14 h-14 bg-blue-500 text-white font-bold rounded-full shadow-2xl pizza-shadow transform hover:scale-105 transition-transform" title="Compartilhar Cardápio">
+                <Icon name="share-2" className="w-6 h-6"/>
+            </button>
+             {cartItemCount > 0 && (
+                <button onClick={() => setShowCart(true)} className="flex items-center justify-center w-14 h-14 bg-red-600 text-white font-bold rounded-full shadow-2xl pizza-shadow transform hover:scale-105 transition-transform" title={`Ver Pedido (${cartItemCount} itens)`}>
+                    <Icon name="shopping-cart" className="w-6 h-6"/>
+                    <span className="absolute -top-1 -right-1 bg-white text-red-600 px-2 py-0.5 rounded-full text-xs font-bold">{cartItemCount}</span>
+                </button>
+            )}
+        </div>
+      )}
 
-      <CartSidebar isOpen={showCart} onClose={() => setShowCart(false)} cart={cart} onUpdateQuantity={updateCartQuantity} total={cartTotal} onCheckout={handleCheckout} />
-      {showLoginModal && <LoginModal onClose={() => setShowLoginModal(false)} onSuccess={handleLoginSuccess} />}
-      {showCheckoutModal && <CheckoutModal onClose={() => setShowCheckoutModal(false)} cart={cart} total={cartTotal} onOrderSuccess={handleOrderSuccess}/>}
+      {!isPublic && <CartSidebar isOpen={showCart} onClose={() => setShowCart(false)} cart={cart} onUpdateQuantity={updateCartQuantity} total={cartTotal} onCheckout={handleCheckout} />}
+      {!isPublic && showLoginModal && <LoginModal onClose={() => setShowLoginModal(false)} onSuccess={handleLoginSuccess} />}
+      {!isPublic && showCheckoutModal && <CheckoutModal onClose={() => setShowCheckoutModal(false)} cart={cart} total={cartTotal} onOrderSuccess={handleOrderSuccess}/>}
     </div>
   );
 }

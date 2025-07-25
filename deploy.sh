@@ -50,6 +50,16 @@ cd "$APP_DIR"
 log "Instalando dependências do backend…"
 cd backend
 pnpm install --prod
+
+log "Criando banco de dados PostgreSQL (se necessário)…"
+sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = '$POSTGRES_DB'" | grep -q 1 || sudo -u postgres createdb -O $POSTGRES_USER $POSTGRES_DB
+
+log "Rodando migrations do Sequelize…"
+pnpm exec sequelize-cli db:migrate
+
+log "Rodando seeders do Sequelize…"
+pnpm exec sequelize-cli db:seed:all
+
 cd ..
 
 ########## 5. Frontend ##########
@@ -59,26 +69,12 @@ pnpm install
 pnpm run build
 cd ..
 
-########## 6. Banco de Dados ##########
-log "Criando banco ($POSTGRES_DB) e populando dados iniciais…"
-sudo -u postgres psql <<SQL
-CREATE DATABASE $POSTGRES_DB OWNER $POSTGRES_USER;\n\c $POSTGRES_DB
-CREATE TABLE IF NOT EXISTS mesas (
-  id SERIAL PRIMARY KEY,
-  numero INT UNIQUE NOT NULL,
-  capacidade INT NOT NULL
-);
-INSERT INTO mesas (numero, capacidade)
-  VALUES (1,4),(2,4),(3,6)
-  ON CONFLICT DO NOTHING;
-SQL
-
-########## 7. Backend via PM2 ##########
+########## 6. Backend via PM2 ##########
 log "Subindo backend com PM2…"
 pm2 start backend/server.js --name japede-backend --update-env --cwd "$APP_DIR"
 pm2 save
 
-########## 8. Health-check ##########
+########## 7. Health-check ##########
 log "Aguardando backend iniciar…"
 sleep 5
 if curl -sf http://localhost:3001/health >/dev/null; then
