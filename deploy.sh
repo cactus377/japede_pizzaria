@@ -17,6 +17,7 @@ APP_DIR="/opt/$PROJECT_NAME"
 NODE_VERSION="20"
 POSTGRES_DB="pizzaria_db"
 POSTGRES_USER="postgres"  # altere se necessário
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(openssl rand -base64 12)}"
 
 log() { printf "\n\033[1;32m➡ %s\033[0m\n" "$*"; }
 
@@ -24,6 +25,29 @@ log() { printf "\n\033[1;32m➡ %s\033[0m\n" "$*"; }
 log "Atualizando pacotes APT e instalando dependências…"
 sudo apt-get update -y
 sudo apt-get install -y curl git build-essential postgresql postgresql-contrib
+
+########## 1.b Banco de Dados ##########
+log "Configurando Postgres (usuário, banco e extensões)…"
+# Garante que o serviço esteja iniciado
+sudo systemctl enable --now postgresql
+# Cria usuário e banco se ainda não existirem
+sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='${POSTGRES_USER}'" | grep -q 1 || \
+  sudo -u postgres psql -c "CREATE USER ${POSTGRES_USER} WITH PASSWORD '${POSTGRES_PASSWORD}';"
+
+sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${POSTGRES_DB}'" | grep -q 1 || \
+  sudo -u postgres psql -c "CREATE DATABASE ${POSTGRES_DB} OWNER ${POSTGRES_USER};"
+
+########## 1.c Arquivo .env ##########
+log "Gerando arquivo .env do backend…"
+cat > "$APP_DIR/backend/.env" <<EOF
+DB_DIALECT=postgres
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_NAME=${POSTGRES_DB}
+DB_USER=${POSTGRES_USER}
+DB_PASSWORD=${POSTGRES_PASSWORD}
+NODE_ENV=production
+EOF
 
 ########## 2. Node LTS, pnpm, PM2 ##########
 if ! command -v node >/dev/null || [[ "$(node -v)" != v$NODE_VERSION* ]]; then
