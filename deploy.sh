@@ -15,9 +15,9 @@ PROJECT_NAME="japede-pizzaria"
 REPO_URL="https://github.com/cactus377/japede_pizzaria.git"  # <- altere
 APP_DIR="/opt/$PROJECT_NAME"
 NODE_VERSION="20"
-POSTGRES_DB="pizzaria_db"
+POSTGRES_DB="supabase"
 POSTGRES_USER="postgres"  # altere se necessário
-POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(openssl rand -base64 12)}"
+POSTGRES_PASSWORD="japede"
 
 log() { printf "\n\033[1;32m➡ %s\033[0m\n" "$*"; }
 
@@ -80,13 +80,51 @@ cd "$APP_DIR"
 
 ########## 4. Backend ##########
 log "Instalando dependências do backend…"
-cd backend
+cd "$APP_DIR/backend"
+
+# Atualiza config.json com a senha gerada para TODOS os ambientes
+log "Atualizando configurações do banco de dados…"
+# Usa aspas duplas para a string JSON e escapa as aspas internas
+sed -i 's/"password": null/"password": "'"${POSTGRES_PASSWORD}"'/g' "$APP_DIR/backend/config/config.json"
+
+# Verifica se o usuário e banco foram criados corretamente
+log "Verificando acesso ao banco de dados…"
+if ! PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1" >/dev/null 2>&1; then
+  log "Erro: Falha ao conectar ao banco de dados com as credenciais fornecidas"
+  log "Usuário: $POSTGRES_USER"
+  log "Banco: $POSTGRES_DB"
+  log "Senha: ${POSTGRES_PASSWORD:0:2}...${POSTGRES_PASSWORD: -2}"  # Mostra apenas início e fim da senha
+  exit 1
+fi
+
+# Instala dependências e executa migrações/seeds
+log "Instalando dependências do backend…"
 pnpm install
-pnpm exec sequelize-cli db:migrate
-pnpm exec sequelize-cli db:seed:all
-pnpm run dev
+
+log "Executando migrações do banco de dados…"
+NODE_ENV=production npx sequelize-cli db:migrate
+
+log "Executando seeds do banco de dados…"
+NODE_ENV=production npx sequelize-cli db:seed:all
+
+# Inicia o backend em produção
+log "Iniciando o backend em modo produção…"
+pnpm run build
+NODE_ENV=production pm2 start dist/index.js --name "$PROJECT_NAME-backend"
 
 # Frontend
-cd frontend
+log "Instalando dependências do frontend…"
+cd "$APP_DIR/frontend"
 pnpm install
-pnpm run dev
+pnpm run build
+
+# Inicia o frontend em produção
+log "Configurando PM2 para o frontend na porta 3001…"
+cd "$APP_DIR"
+npm install -g serve
+pm2 start serve --name "$PROJECT_NAME-frontend" -- -s build -l 3001
+
+# Salva a lista de processos do PM2
+pm2 save
+
+log "✅  Deploy concluído! Acesse http://localhost:3001"
