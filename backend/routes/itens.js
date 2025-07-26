@@ -1,47 +1,46 @@
 import express from 'express';
 import { 
-  mockItensCardapio, 
+  getAllItens,
   addItem, 
   updateItem, 
   deleteItem, 
-  findItemById 
-} from '../models/mockData.js';
+  findItemById
+} from '../services/databaseService.js';
 
 const router = express.Router();
 
 // Get all itens
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const { categoria, disponivel, search } = req.query;
+    const { search, categoria, limit, offset } = req.query;
     
-    let filteredItens = [...mockItensCardapio];
+    let itens = await getAllItens();
 
-    // Filter by categoria
-    if (categoria && categoria !== 'todos') {
-      filteredItens = filteredItens.filter(i => i.categoria === categoria);
-    }
-
-    // Filter by disponibilidade
-    if (disponivel !== undefined) {
-      const isDisponivel = disponivel === 'true';
-      filteredItens = filteredItens.filter(i => i.disponivel === isDisponivel);
-    }
-
-    // Search by name or description
+    // Search by name
     if (search) {
       const searchLower = search.toLowerCase();
-      filteredItens = filteredItens.filter(i => 
+      itens = itens.filter(i => 
         i.nome.toLowerCase().includes(searchLower) ||
         i.descricao.toLowerCase().includes(searchLower)
       );
     }
 
-    // Sort by name
-    filteredItens.sort((a, b) => a.nome.localeCompare(b.nome));
+    // Filter by categoria
+    if (categoria) {
+      itens = itens.filter(i => i.categoria === categoria);
+    }
+
+    // Pagination
+    const limitNum = parseInt(limit) || itens.length;
+    const offsetNum = parseInt(offset) || 0;
+    const paginatedItens = itens.slice(offsetNum, offsetNum + limitNum);
 
     res.json({
       success: true,
-      data: filteredItens
+      data: paginatedItens.map(item => item.toJSON()),
+      total: itens.length,
+      limit: limitNum,
+      offset: offsetNum
     });
   } catch (error) {
     console.error('Get itens error:', error);
@@ -50,10 +49,10 @@ router.get('/', (req, res) => {
 });
 
 // Get item by ID
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const item = findItemById(id);
+    const item = await findItemById(id);
 
     if (!item) {
       return res.status(404).json({ error: 'Item não encontrado' });
@@ -61,7 +60,7 @@ router.get('/:id', (req, res) => {
 
     res.json({
       success: true,
-      data: item
+      data: item.toJSON()
     });
   } catch (error) {
     console.error('Get item error:', error);
@@ -70,39 +69,27 @@ router.get('/:id', (req, res) => {
 });
 
 // Create new item
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
-    const {
-      nome,
-      descricao,
-      preco,
-      custo,
-      categoria,
-      disponivel,
-      imagemUrl,
-      tamanhos,
-      bordas
-    } = req.body;
+    const { nome, descricao, preco, custo, categoria, disponivel, imagemUrl } = req.body;
 
     // Validation
-    if (!nome || !categoria || preco === undefined) {
-      return res.status(400).json({ error: 'Nome, categoria e preço são obrigatórios' });
+    if (!nome || !preco || !categoria) {
+      return res.status(400).json({ error: 'Nome, preço e categoria são obrigatórios' });
     }
 
     if (preco < 0) {
       return res.status(400).json({ error: 'Preço deve ser maior ou igual a zero' });
     }
 
-    const newItem = addItem({
+    const newItem = await addItem({
       nome,
       descricao: descricao || '',
       preco: parseFloat(preco),
       custo: custo ? parseFloat(custo) : 0,
       categoria,
       disponivel: disponivel !== false,
-      imagemUrl: imagemUrl || '',
-      tamanhos: tamanhos || [],
-      bordas: bordas || []
+      imagemUrl: imagemUrl || ''
     });
 
     res.status(201).json({
@@ -116,29 +103,29 @@ router.post('/', (req, res) => {
 });
 
 // Update item
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const updates = req.body;
+    const { nome, descricao, preco, custo, categoria, disponivel, imagemUrl } = req.body;
 
     // Validation
-    if (updates.preco !== undefined && updates.preco < 0) {
+    if (!nome || !preco || !categoria) {
+      return res.status(400).json({ error: 'Nome, preço e categoria são obrigatórios' });
+    }
+
+    if (preco < 0) {
       return res.status(400).json({ error: 'Preço deve ser maior ou igual a zero' });
     }
 
-    if (updates.custo !== undefined && updates.custo < 0) {
-      return res.status(400).json({ error: 'Custo deve ser maior ou igual a zero' });
-    }
-
-    // Convert numeric fields
-    if (updates.preco !== undefined) {
-      updates.preco = parseFloat(updates.preco);
-    }
-    if (updates.custo !== undefined) {
-      updates.custo = parseFloat(updates.custo);
-    }
-
-    const updatedItem = updateItem(id, updates);
+    const updatedItem = await updateItem(id, {
+      nome,
+      descricao: descricao || '',
+      preco: parseFloat(preco),
+      custo: custo ? parseFloat(custo) : 0,
+      categoria,
+      disponivel: disponivel !== false,
+      imagemUrl: imagemUrl || ''
+    });
 
     if (!updatedItem) {
       return res.status(404).json({ error: 'Item não encontrado' });
@@ -155,10 +142,10 @@ router.put('/:id', (req, res) => {
 });
 
 // Delete item
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const deletedItem = deleteItem(id);
+    const deletedItem = await deleteItem(id);
 
     if (!deletedItem) {
       return res.status(404).json({ error: 'Item não encontrado' });
@@ -166,8 +153,7 @@ router.delete('/:id', (req, res) => {
 
     res.json({
       success: true,
-      message: 'Item excluído com sucesso',
-      data: deletedItem
+      message: 'Item excluído com sucesso'
     });
   } catch (error) {
     console.error('Delete item error:', error);
@@ -176,10 +162,11 @@ router.delete('/:id', (req, res) => {
 });
 
 // Get categorias
-router.get('/meta/categorias', (req, res) => {
+router.get('/categorias/list', async (req, res) => {
   try {
-    const categorias = [...new Set(mockItensCardapio.map(i => i.categoria))].sort();
-    
+    const itens = await getAllItens();
+    const categorias = [...new Set(itens.map(i => i.categoria))].sort();
+
     res.json({
       success: true,
       data: categorias

@@ -1,47 +1,39 @@
 import express from 'express';
 import { 
-  mockPedidos, 
+  getAllPedidos,
   addPedido, 
   updatePedidoStatus, 
-  findPedidoById,
-  updateMesaStatus 
-} from '../models/mockData.js';
-import { optionalAuth } from '../middleware/auth.js';
+  findPedidoById
+} from '../services/databaseService.js';
 
 const router = express.Router();
 
 // Get all pedidos
-router.get('/', optionalAuth, (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const { status, cliente, limit, offset } = req.query;
+    const { status, tipo, limit, offset } = req.query;
     
-    let filteredPedidos = [...mockPedidos];
+    let pedidos = await getAllPedidos();
 
     // Filter by status
-    if (status && status !== 'todos') {
-      filteredPedidos = filteredPedidos.filter(p => p.status === status);
+    if (status) {
+      pedidos = pedidos.filter(p => p.status === status);
     }
 
-    // Filter by cliente
-    if (cliente) {
-      filteredPedidos = filteredPedidos.filter(p => 
-        p.cliente.nome.toLowerCase().includes(cliente.toLowerCase()) ||
-        p.cliente.telefone.includes(cliente)
-      );
+    // Filter by tipo
+    if (tipo) {
+      pedidos = pedidos.filter(p => p.tipo === tipo);
     }
-
-    // Sort by creation date (newest first)
-    filteredPedidos.sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
 
     // Pagination
-    const limitNum = parseInt(limit) || filteredPedidos.length;
+    const limitNum = parseInt(limit) || pedidos.length;
     const offsetNum = parseInt(offset) || 0;
-    const paginatedPedidos = filteredPedidos.slice(offsetNum, offsetNum + limitNum);
+    const paginatedPedidos = pedidos.slice(offsetNum, offsetNum + limitNum);
 
     res.json({
       success: true,
-      data: paginatedPedidos,
-      total: filteredPedidos.length,
+      data: paginatedPedidos.map(pedido => pedido.toJSON()),
+      total: pedidos.length,
       limit: limitNum,
       offset: offsetNum
     });
@@ -52,10 +44,10 @@ router.get('/', optionalAuth, (req, res) => {
 });
 
 // Get pedido by ID
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const pedido = findPedidoById(id);
+    const pedido = await findPedidoById(id);
 
     if (!pedido) {
       return res.status(404).json({ error: 'Pedido não encontrado' });
@@ -63,7 +55,7 @@ router.get('/:id', (req, res) => {
 
     res.json({
       success: true,
-      data: pedido
+      data: pedido.toJSON()
     });
   } catch (error) {
     console.error('Get pedido error:', error);
@@ -72,46 +64,37 @@ router.get('/:id', (req, res) => {
 });
 
 // Create new pedido
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
-    const {
-      cliente,
-      itens,
+    const { clienteId, itens, tipo, mesaId, valor_total, custo_total } = req.body;
+
+    // Validation
+    if (!clienteId || !itens || !tipo) {
+      return res.status(400).json({ error: 'Cliente, itens e tipo são obrigatórios' });
+    }
+
+    if (!Array.isArray(itens) || itens.length === 0) {
+      return res.status(400).json({ error: 'Pedido deve ter pelo menos um item' });
+    }
+
+    const validTipos = ['delivery', 'mesa', 'balcao'];
+    if (!validTipos.includes(tipo)) {
+      return res.status(400).json({ error: 'Tipo inválido' });
+    }
+
+    const lucro = valor_total - custo_total;
+    const tempo_estimado = 30; // Default time
+
+    const newPedido = await addPedido({
+      clienteId,
       valor_total,
       custo_total,
       lucro,
       tempo_estimado,
-      tipo,
-      mesaId,
-      pagamento
-    } = req.body;
-
-    // Validation
-    if (!cliente || !itens || !Array.isArray(itens) || itens.length === 0) {
-      return res.status(400).json({ error: 'Cliente e itens são obrigatórios' });
-    }
-
-    if (!valor_total || valor_total <= 0) {
-      return res.status(400).json({ error: 'Valor total deve ser maior que zero' });
-    }
-
-    const newPedido = addPedido({
-      cliente,
-      itens,
       status: 'pendente',
-      valor_total: parseFloat(valor_total),
-      custo_total: parseFloat(custo_total) || 0,
-      lucro: parseFloat(lucro) || (parseFloat(valor_total) - parseFloat(custo_total || 0)),
-      tempo_estimado: parseInt(tempo_estimado) || 30,
-      tipo: tipo || 'balcao',
-      mesaId: mesaId ? parseInt(mesaId) : undefined,
-      pagamento
+      tipo,
+      mesaId: tipo === 'mesa' ? mesaId : null
     });
-
-    // Update mesa status if it's a mesa order
-    if (tipo === 'mesa' && mesaId) {
-      updateMesaStatus(parseInt(mesaId), 'ocupada');
-    }
 
     res.status(201).json({
       success: true,
@@ -124,26 +107,25 @@ router.post('/', (req, res) => {
 });
 
 // Update pedido status
-router.patch('/:id/status', (req, res) => {
+router.put('/:id/status', async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
 
-    const validStatuses = ['pendente', 'preparando', 'pronto', 'em rota de entrega', 'entregue', 'cancelado'];
-    
-    if (!status || !validStatuses.includes(status)) {
+    // Validation
+    if (!status) {
+      return res.status(400).json({ error: 'Status é obrigatório' });
+    }
+
+    const validStatuses = ['pendente', 'preparando', 'pronto', 'entregue', 'cancelado', 'em rota de entrega'];
+    if (!validStatuses.includes(status)) {
       return res.status(400).json({ error: 'Status inválido' });
     }
 
-    const updatedPedido = updatePedidoStatus(id, status);
+    const updatedPedido = await updatePedidoStatus(id, status);
 
     if (!updatedPedido) {
       return res.status(404).json({ error: 'Pedido não encontrado' });
-    }
-
-    // Free mesa if order is completed and was a mesa order
-    if ((status === 'entregue' || status === 'cancelado') && updatedPedido.tipo === 'mesa' && updatedPedido.mesaId) {
-      updateMesaStatus(updatedPedido.mesaId, 'livre');
     }
 
     res.json({
@@ -157,36 +139,40 @@ router.patch('/:id/status', (req, res) => {
 });
 
 // Get pedidos statistics
-router.get('/stats/summary', (req, res) => {
+router.get('/stats/overview', async (req, res) => {
   try {
+    const pedidos = await getAllPedidos();
+    
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    const todayPedidos = mockPedidos.filter(p => {
-      const pedidoDate = new Date(p.created_date);
-      pedidoDate.setHours(0, 0, 0, 0);
-      return pedidoDate.getTime() === today.getTime();
+    const todayPedidos = pedidos.filter(p => {
+      const pedidoDate = new Date(p.createdAt);
+      return pedidoDate >= today;
     });
 
-    const activePedidos = mockPedidos.filter(p => 
+    const activePedidos = pedidos.filter(p =>
       ['pendente', 'preparando', 'pronto', 'em rota de entrega'].includes(p.status)
     );
 
-    const deliveredToday = todayPedidos.filter(p => p.status === 'entregue');
-    const revenueToday = deliveredToday.reduce((sum, p) => sum + p.valor_total, 0);
-    const profitToday = deliveredToday.reduce((sum, p) => sum + p.lucro, 0);
+    const totalRevenue = todayPedidos
+      .filter(p => p.status === 'entregue')
+      .reduce((acc, p) => acc + p.valor_total, 0);
+
+    const totalProfit = todayPedidos
+      .filter(p => p.status === 'entregue')
+      .reduce((acc, p) => acc + p.lucro, 0);
 
     res.json({
       success: true,
       data: {
-        activePedidos: activePedidos.length,
         todayOrders: todayPedidos.length,
-        deliveredToday: deliveredToday.length,
-        revenueToday,
-        profitToday,
-        pendingOrders: mockPedidos.filter(p => p.status === 'pendente').length,
-        preparingOrders: mockPedidos.filter(p => p.status === 'preparando').length,
-        readyOrders: mockPedidos.filter(p => p.status === 'pronto').length
+        activeOrders: activePedidos.length,
+        totalRevenue,
+        totalProfit,
+        pendingOrders: pedidos.filter(p => p.status === 'pendente').length,
+        preparingOrders: pedidos.filter(p => p.status === 'preparando').length,
+        readyOrders: pedidos.filter(p => p.status === 'pronto').length
       }
     });
   } catch (error) {

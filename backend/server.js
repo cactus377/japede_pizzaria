@@ -6,6 +6,9 @@ import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 
+// Import database connection
+import db from './models/index.js';
+
 // Import routes
 import authRoutes from './routes/auth.js';
 import pedidosRoutes from './routes/pedidos.js';
@@ -47,7 +50,8 @@ app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'OK',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    database: db.sequelize.connectionManager.getConnection ? 'Connected' : 'Disconnected'
   });
 });
 
@@ -83,11 +87,26 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`🍕 Japede Backend Server running on port ${PORT}`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔗 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:5173'}`);
-});
+// Start server with database connection
+const startServer = async () => {
+  try {
+    // Test database connection
+    await db.sequelize.authenticate();
+    console.log('✅ Database connection established successfully.');
+    
+    // Start server
+    app.listen(PORT, () => {
+      console.log(`🍕 Japede Backend Server running on port ${PORT}`);
+      console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`🔗 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:5173'}`);
+      console.log(`🗄️  Database: ${db.sequelize.getDatabaseName()}`);
+    });
+  } catch (error) {
+    console.error('❌ Unable to connect to the database:', error);
+    process.exit(1);
+  }
+};
+
+startServer();
 
 export default app;

@@ -1,38 +1,39 @@
 import express from 'express';
 import { 
-  mockClientes, 
+  getAllClientes,
   addCliente, 
   updateCliente, 
   deleteCliente, 
   findClienteById,
-  mockPedidos 
-} from '../models/mockData.js';
+  getAllPedidos
+} from '../services/databaseService.js';
 
 const router = express.Router();
 
 // Get all clientes
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { search, limit, offset } = req.query;
     
-    let filteredClientes = [...mockClientes];
+    let clientes = await getAllClientes();
 
     // Search by name or phone
     if (search) {
       const searchLower = search.toLowerCase();
-      filteredClientes = filteredClientes.filter(c => 
+      clientes = clientes.filter(c => 
         c.nome.toLowerCase().includes(searchLower) ||
         c.telefone.includes(search)
       );
     }
 
     // Add statistics for each cliente
-    const clientesWithStats = filteredClientes.map(cliente => {
-      const clientePedidos = mockPedidos.filter(p => p.cliente.id === cliente.id && p.status === 'entregue');
+    const pedidos = await getAllPedidos();
+    const clientesWithStats = clientes.map(cliente => {
+      const clientePedidos = pedidos.filter(p => p.clienteId === cliente.id && p.status === 'entregue');
       const totalGasto = clientePedidos.reduce((acc, p) => acc + p.valor_total, 0);
       
       return {
-        ...cliente,
+        ...cliente.toJSON(),
         totalPedidos: clientePedidos.length,
         totalGasto
       };
@@ -60,24 +61,25 @@ router.get('/', (req, res) => {
 });
 
 // Get cliente by ID
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const cliente = findClienteById(id);
+    const cliente = await findClienteById(id);
 
     if (!cliente) {
       return res.status(404).json({ error: 'Cliente não encontrado' });
     }
 
     // Add statistics
-    const clientePedidos = mockPedidos.filter(p => p.cliente.id === cliente.id);
+    const pedidos = await getAllPedidos();
+    const clientePedidos = pedidos.filter(p => p.clienteId === cliente.id);
     const pedidosEntregues = clientePedidos.filter(p => p.status === 'entregue');
     const totalGasto = pedidosEntregues.reduce((acc, p) => acc + p.valor_total, 0);
 
     res.json({
       success: true,
       data: {
-        ...cliente,
+        ...cliente.toJSON(),
         totalPedidos: pedidosEntregues.length,
         totalGasto,
         pedidosRecentes: clientePedidos.slice(0, 5)
@@ -90,7 +92,7 @@ router.get('/:id', (req, res) => {
 });
 
 // Create new cliente
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const { nome, telefone, endereco } = req.body;
 
@@ -100,16 +102,12 @@ router.post('/', (req, res) => {
     }
 
     // Check if telefone already exists
-    const existingCliente = mockClientes.find(c => c.telefone === telefone);
+    const existingCliente = await findClienteByTelefone(telefone);
     if (existingCliente) {
-      return res.status(409).json({ error: 'Já existe um cliente com este telefone' });
+      return res.status(400).json({ error: 'Telefone já cadastrado' });
     }
 
-    const newCliente = addCliente({
-      nome,
-      telefone,
-      endereco: endereco || ''
-    });
+    const newCliente = await addCliente({ nome, telefone, endereco });
 
     res.status(201).json({
       success: true,
@@ -122,7 +120,7 @@ router.post('/', (req, res) => {
 });
 
 // Update cliente
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { nome, telefone, endereco } = req.body;
@@ -133,16 +131,12 @@ router.put('/:id', (req, res) => {
     }
 
     // Check if telefone already exists for another cliente
-    const existingCliente = mockClientes.find(c => c.telefone === telefone && c.id !== id);
-    if (existingCliente) {
-      return res.status(409).json({ error: 'Já existe outro cliente com este telefone' });
+    const existingCliente = await findClienteByTelefone(telefone);
+    if (existingCliente && existingCliente.id !== parseInt(id)) {
+      return res.status(400).json({ error: 'Telefone já cadastrado para outro cliente' });
     }
 
-    const updatedCliente = updateCliente(id, {
-      nome,
-      telefone,
-      endereco: endereco || ''
-    });
+    const updatedCliente = await updateCliente(id, { nome, telefone, endereco });
 
     if (!updatedCliente) {
       return res.status(404).json({ error: 'Cliente não encontrado' });
@@ -159,19 +153,22 @@ router.put('/:id', (req, res) => {
 });
 
 // Delete cliente
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
+
+    // Check if cliente has active pedidos
+    const pedidos = await getAllPedidos();
+    const clientePedidos = pedidos.filter(p => p.clienteId === parseInt(id) && p.status !== 'entregue' && p.status !== 'cancelado');
     
-    // Check if cliente has any pedidos
-    const clientePedidos = mockPedidos.filter(p => p.cliente.id === id);
     if (clientePedidos.length > 0) {
       return res.status(400).json({ 
-        error: 'Não é possível excluir cliente que possui pedidos' 
+        error: 'Não é possível excluir cliente com pedidos ativos',
+        activeOrders: clientePedidos.length
       });
     }
 
-    const deletedCliente = deleteCliente(id);
+    const deletedCliente = await deleteCliente(id);
 
     if (!deletedCliente) {
       return res.status(404).json({ error: 'Cliente não encontrado' });
@@ -179,8 +176,7 @@ router.delete('/:id', (req, res) => {
 
     res.json({
       success: true,
-      message: 'Cliente excluído com sucesso',
-      data: deletedCliente
+      message: 'Cliente excluído com sucesso'
     });
   } catch (error) {
     console.error('Delete cliente error:', error);

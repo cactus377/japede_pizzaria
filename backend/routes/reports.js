@@ -1,104 +1,73 @@
 import express from 'express';
-import { mockPedidos, mockItensCardapio } from '../models/mockData.js';
+import { getAllPedidos, getAllItens } from '../services/databaseService.js';
 
 const router = express.Router();
 
 // Get sales report
-router.get('/sales', (req, res) => {
+router.get('/sales', async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, status } = req.query;
+    
+    let pedidos = await getAllPedidos();
 
-    if (!startDate || !endDate) {
-      return res.status(400).json({ error: 'Data de início e fim são obrigatórias' });
+    // Filter by date range
+    if (startDate || endDate) {
+      const start = startDate ? new Date(startDate) : new Date(0);
+      const end = endDate ? new Date(endDate) : new Date();
+      
+      pedidos = pedidos.filter(p => {
+        const pedidoDate = new Date(p.createdAt);
+        return pedidoDate >= start && pedidoDate <= end;
+      });
     }
 
-    const start = new Date(startDate);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
-
-    // Filter pedidos by date range and delivered status
-    const filteredPedidos = mockPedidos.filter(p => {
-      const pDate = new Date(p.created_date);
-      return p.status === 'entregue' && pDate >= start && pDate <= end;
-    });
+    // Filter by status
+    if (status) {
+      pedidos = pedidos.filter(p => p.status === status);
+    }
 
     // Calculate totals
-    const totalRevenue = filteredPedidos.reduce((acc, p) => acc + p.valor_total, 0);
-    const totalCost = filteredPedidos.reduce((acc, p) => acc + p.custo_total, 0);
-    const totalProfit = filteredPedidos.reduce((acc, p) => acc + p.lucro, 0);
-    const totalOrders = filteredPedidos.length;
-    const averageTicket = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+    const totalRevenue = pedidos
+      .filter(p => p.status === 'entregue')
+      .reduce((acc, p) => acc + p.valor_total, 0);
 
-    // Calculate daily revenue
-    const dailyRevenue = {};
-    filteredPedidos.forEach(p => {
-      const day = new Date(p.created_date).toLocaleDateString('pt-BR');
-      if (!dailyRevenue[day]) {
-        dailyRevenue[day] = { faturamento: 0, custo: 0, lucro: 0 };
+    const totalProfit = pedidos
+      .filter(p => p.status === 'entregue')
+      .reduce((acc, p) => acc + p.lucro, 0);
+
+    const totalOrders = pedidos.length;
+    const deliveredOrders = pedidos.filter(p => p.status === 'entregue').length;
+
+    // Group by date
+    const salesByDate = {};
+    pedidos.forEach(pedido => {
+      const date = new Date(pedido.createdAt).toISOString().split('T')[0];
+      if (!salesByDate[date]) {
+        salesByDate[date] = {
+          date,
+          orders: 0,
+          revenue: 0,
+          profit: 0
+        };
       }
-      dailyRevenue[day].faturamento += p.valor_total;
-      dailyRevenue[day].custo += p.custo_total;
-      dailyRevenue[day].lucro += p.lucro;
-    });
-
-    const dailyData = Object.entries(dailyRevenue).map(([name, values]) => ({
-      name,
-      ...values
-    }));
-
-    // Calculate best selling items
-    const itemSales = {};
-    filteredPedidos.forEach(p => {
-      p.itens.forEach(i => {
-        if (!itemSales[i.item.id]) {
-          itemSales[i.item.id] = {
-            name: i.item.nome,
-            quantity: 0,
-            revenue: 0
-          };
-        }
-        itemSales[i.item.id].quantity += i.quantidade;
-        itemSales[i.item.id].revenue += (i.item.preco * i.quantidade);
-      });
-    });
-
-    const bestSellers = Object.values(itemSales)
-      .sort((a, b) => b.quantity - a.quantity)
-      .slice(0, 10);
-
-    // Payment method breakdown
-    const paymentMethods = {};
-    filteredPedidos.forEach(p => {
-      const method = p.pagamento?.metodo || 'indefinido';
-      if (!paymentMethods[method]) {
-        paymentMethods[method] = 0;
+      salesByDate[date].orders++;
+      if (pedido.status === 'entregue') {
+        salesByDate[date].revenue += pedido.valor_total;
+        salesByDate[date].profit += pedido.lucro;
       }
-      paymentMethods[method] += p.valor_total;
     });
-
-    const paymentData = Object.entries(paymentMethods).map(([name, value]) => ({
-      name: name.charAt(0).toUpperCase() + name.slice(1),
-      value
-    }));
 
     res.json({
       success: true,
       data: {
         summary: {
-          totalRevenue,
-          totalCost,
-          totalProfit,
           totalOrders,
-          averageTicket
+          deliveredOrders,
+          totalRevenue,
+          totalProfit,
+          averageOrderValue: deliveredOrders > 0 ? totalRevenue / deliveredOrders : 0
         },
-        dailyRevenue: dailyData,
-        bestSellers,
-        paymentMethods: paymentData,
-        period: {
-          startDate,
-          endDate
-        }
+        salesByDate: Object.values(salesByDate).sort((a, b) => a.date.localeCompare(b.date))
       }
     });
   } catch (error) {
@@ -107,115 +76,120 @@ router.get('/sales', (req, res) => {
   }
 });
 
-// Get financial summary
-router.get('/financial', (req, res) => {
+// Get items report
+router.get('/items', async (req, res) => {
   try {
-    const deliveredOrders = mockPedidos.filter(p => p.status === 'entregue');
+    const { startDate, endDate } = req.query;
     
-    const totalRevenue = deliveredOrders.reduce((sum, p) => sum + p.valor_total, 0);
-    const totalCost = deliveredOrders.reduce((sum, p) => sum + p.custo_total, 0);
-    const totalProfit = deliveredOrders.reduce((sum, p) => sum + p.lucro, 0);
-    const averageTicket = deliveredOrders.length > 0 ? totalRevenue / deliveredOrders.length : 0;
+    const pedidos = await getAllPedidos();
+    const itens = await getAllItens();
 
-    // Monthly data for the last 12 months
-    const monthlyData = {};
-    const now = new Date();
-    
-    for (let i = 11; i >= 0; i--) {
-      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const monthKey = date.toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric' });
-      monthlyData[monthKey] = { faturamento: 0, custo: 0, lucro: 0, pedidos: 0 };
+    // Filter by date range
+    let filteredPedidos = pedidos;
+    if (startDate || endDate) {
+      const start = startDate ? new Date(startDate) : new Date(0);
+      const end = endDate ? new Date(endDate) : new Date();
+      
+      filteredPedidos = pedidos.filter(p => {
+        const pedidoDate = new Date(p.createdAt);
+        return pedidoDate >= start && pedidoDate <= end;
+      });
     }
 
-    deliveredOrders.forEach(p => {
-      const pDate = new Date(p.created_date);
-      const monthKey = pDate.toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric' });
-      
-      if (monthlyData[monthKey]) {
-        monthlyData[monthKey].faturamento += p.valor_total;
-        monthlyData[monthKey].custo += p.custo_total;
-        monthlyData[monthKey].lucro += p.lucro;
-        monthlyData[monthKey].pedidos += 1;
+    // Count item sales
+    const itemSales = {};
+    filteredPedidos.forEach(pedido => {
+      if (pedido.PedidoItems) {
+        pedido.PedidoItems.forEach(item => {
+          const itemId = item.itemCardapioId;
+          if (!itemSales[itemId]) {
+            itemSales[itemId] = {
+              id: itemId,
+              quantidade: 0,
+              revenue: 0
+            };
+          }
+          itemSales[itemId].quantidade += item.quantidade;
+          itemSales[itemId].revenue += item.quantidade * (item.ItemCardapio?.preco || 0);
+        });
       }
     });
 
-    const monthlyChartData = Object.entries(monthlyData).map(([name, values]) => ({
-      name,
-      ...values
+    // Combine with item info
+    const itemsReport = itens.map(item => ({
+      ...item.toJSON(),
+      vendas: itemSales[item.id]?.quantidade || 0,
+      receita: itemSales[item.id]?.revenue || 0
     }));
+
+    // Sort by sales
+    itemsReport.sort((a, b) => b.vendas - a.vendas);
 
     res.json({
       success: true,
-      data: {
-        summary: {
-          totalRevenue,
-          totalCost,
-          totalProfit,
-          averageTicket,
-          totalOrders: deliveredOrders.length
-        },
-        monthlyData: monthlyChartData
-      }
+      data: itemsReport
     });
   } catch (error) {
-    console.error('Get financial report error:', error);
+    console.error('Get items report error:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });
 
 // Get dashboard stats
-router.get('/dashboard', (req, res) => {
+router.get('/dashboard', async (req, res) => {
   try {
+    const pedidos = await getAllPedidos();
+    
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    const todayPedidos = mockPedidos.filter(p => {
-      const pedidoDate = new Date(p.created_date);
-      pedidoDate.setHours(0, 0, 0, 0);
-      return pedidoDate.getTime() === today.getTime();
+    const todayPedidos = pedidos.filter(p => {
+      const pedidoDate = new Date(p.createdAt);
+      return pedidoDate >= today;
     });
 
-    const activePedidos = mockPedidos.filter(p => 
+    const activePedidos = pedidos.filter(p =>
       ['pendente', 'preparando', 'pronto', 'em rota de entrega'].includes(p.status)
     );
 
-    const deliveredToday = todayPedidos.filter(p => p.status === 'entregue');
-    const revenueToday = deliveredToday.reduce((sum, p) => sum + p.valor_total, 0);
-    const profitToday = deliveredToday.reduce((sum, p) => sum + p.lucro, 0);
-
-    // Weekly sales data
-    const weeklyData = {};
-    const oneWeekAgo = new Date();
-    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-
-    const weekPedidos = mockPedidos.filter(p => {
-      const pDate = new Date(p.created_date);
-      return p.status === 'entregue' && pDate >= oneWeekAgo;
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - 7);
+    
+    const weekPedidos = pedidos.filter(p => {
+      const pedidoDate = new Date(p.createdAt);
+      return pedidoDate >= weekStart;
     });
 
-    weekPedidos.forEach(p => {
-      const day = new Date(p.created_date).toLocaleDateString('pt-BR', { weekday: 'short' });
-      if (!weeklyData[day]) weeklyData[day] = 0;
-      weeklyData[day] += p.valor_total;
-    });
+    const totalRevenue = todayPedidos
+      .filter(p => p.status === 'entregue')
+      .reduce((acc, p) => acc + p.valor_total, 0);
 
-    const weeklyChartData = Object.entries(weeklyData).map(([name, Vendas]) => ({
-      name: name.slice(0, 3),
-      Vendas
-    }));
+    const totalProfit = todayPedidos
+      .filter(p => p.status === 'entregue')
+      .reduce((acc, p) => acc + p.lucro, 0);
+
+    const weekRevenue = weekPedidos
+      .filter(p => p.status === 'entregue')
+      .reduce((acc, p) => acc + p.valor_total, 0);
 
     res.json({
       success: true,
       data: {
-        activePedidos: activePedidos.length,
-        todayOrders: todayPedidos.length,
-        deliveredToday: deliveredToday.length,
-        revenueToday,
-        profitToday,
-        pendingOrders: mockPedidos.filter(p => p.status === 'pendente').length,
-        preparingOrders: mockPedidos.filter(p => p.status === 'preparando').length,
-        readyOrders: mockPedidos.filter(p => p.status === 'pronto').length,
-        weeklyData: weeklyChartData
+        today: {
+          orders: todayPedidos.length,
+          revenue: totalRevenue,
+          profit: totalProfit
+        },
+        week: {
+          orders: weekPedidos.length,
+          revenue: weekRevenue
+        },
+        active: {
+          orders: activePedidos.length,
+          pending: pedidos.filter(p => p.status === 'pendente').length,
+          preparing: pedidos.filter(p => p.status === 'preparando').length,
+          ready: pedidos.filter(p => p.status === 'pronto').length
+        }
       }
     });
   } catch (error) {

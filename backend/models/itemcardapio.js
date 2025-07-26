@@ -11,6 +11,7 @@ module.exports = (sequelize, DataTypes) => {
      */
     static associate(models) {
       // define association here
+      ItemCardapio.hasMany(models.PedidoItem, { foreignKey: 'itemCardapioId' });
     }
   }
   ItemCardapio.init({

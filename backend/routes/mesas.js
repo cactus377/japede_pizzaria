@@ -1,26 +1,23 @@
 import express from 'express';
-import { mockMesas, updateMesaStatus, findMesaById } from '../models/mockData.js';
+import { getAllMesas, updateMesaStatus, findMesaById } from '../services/databaseService.js';
 
 const router = express.Router();
 
 // Get all mesas
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { status } = req.query;
     
-    let filteredMesas = [...mockMesas];
+    let mesas = await getAllMesas();
 
     // Filter by status
-    if (status && status !== 'todos') {
-      filteredMesas = filteredMesas.filter(m => m.status === status);
+    if (status) {
+      mesas = mesas.filter(m => m.status === status);
     }
-
-    // Sort by mesa number
-    filteredMesas.sort((a, b) => a.numero - b.numero);
 
     res.json({
       success: true,
-      data: filteredMesas
+      data: mesas.map(mesa => mesa.toJSON())
     });
   } catch (error) {
     console.error('Get mesas error:', error);
@@ -29,10 +26,10 @@ router.get('/', (req, res) => {
 });
 
 // Get mesa by ID
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const mesa = findMesaById(parseInt(id));
+    const mesa = await findMesaById(id);
 
     if (!mesa) {
       return res.status(404).json({ error: 'Mesa não encontrada' });
@@ -40,7 +37,7 @@ router.get('/:id', (req, res) => {
 
     res.json({
       success: true,
-      data: mesa
+      data: mesa.toJSON()
     });
   } catch (error) {
     console.error('Get mesa error:', error);
@@ -49,18 +46,22 @@ router.get('/:id', (req, res) => {
 });
 
 // Update mesa status
-router.patch('/:id/status', (req, res) => {
+router.put('/:id/status', async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
 
+    // Validation
+    if (!status) {
+      return res.status(400).json({ error: 'Status é obrigatório' });
+    }
+
     const validStatuses = ['livre', 'ocupada', 'reservada'];
-    
-    if (!status || !validStatuses.includes(status)) {
+    if (!validStatuses.includes(status)) {
       return res.status(400).json({ error: 'Status inválido' });
     }
 
-    const updatedMesa = updateMesaStatus(parseInt(id), status);
+    const updatedMesa = await updateMesaStatus(id, status);
 
     if (!updatedMesa) {
       return res.status(404).json({ error: 'Mesa não encontrada' });
@@ -76,14 +77,15 @@ router.patch('/:id/status', (req, res) => {
   }
 });
 
-// Get mesas statistics
-router.get('/stats/summary', (req, res) => {
+// Get mesa statistics
+router.get('/stats/overview', async (req, res) => {
   try {
-    const totalMesas = mockMesas.length;
-    const ocupadas = mockMesas.filter(m => m.status === 'ocupada').length;
-    const livres = mockMesas.filter(m => m.status === 'livre').length;
-    const reservadas = mockMesas.filter(m => m.status === 'reservada').length;
-    const ocupacaoPercentual = totalMesas > 0 ? Math.round((ocupadas / totalMesas) * 100) : 0;
+    const mesas = await getAllMesas();
+    
+    const totalMesas = mesas.length;
+    const ocupadas = mesas.filter(m => m.status === 'ocupada').length;
+    const livres = mesas.filter(m => m.status === 'livre').length;
+    const reservadas = mesas.filter(m => m.status === 'reservada').length;
 
     res.json({
       success: true,
@@ -92,11 +94,11 @@ router.get('/stats/summary', (req, res) => {
         ocupadas,
         livres,
         reservadas,
-        ocupacaoPercentual
+        ocupacaoPercentual: totalMesas > 0 ? Math.round((ocupadas / totalMesas) * 100) : 0
       }
     });
   } catch (error) {
-    console.error('Get mesas stats error:', error);
+    console.error('Get mesa stats error:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });
