@@ -12,7 +12,7 @@ set -euo pipefail
 # 4. O script cuidará de tudo (Node, pnpm, PM2, clone/pull, build, seed DB)
 
 PROJECT_NAME="japede-pizzaria"
-REPO_URL="https://github.com/SEU_USER/$PROJECT_NAME.git"  # <- altere
+REPO_URL="https://github.com/cactus377/japede_pizzaria.git"  # <- altere
 APP_DIR="/opt/$PROJECT_NAME"
 NODE_VERSION="20"
 POSTGRES_DB="pizzaria_db"
