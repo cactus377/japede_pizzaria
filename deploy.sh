@@ -39,6 +39,8 @@ sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${POSTGRES_D
 
 ########## 1.c Arquivo .env ##########
 log "Gerando arquivo .env do backend…"
+# garante que o diretório existe (caso o clone ainda não tenha ocorrido)
+mkdir -p "$APP_DIR/backend"
 cat > "$APP_DIR/backend/.env" <<EOF
 DB_DIALECT=postgres
 DB_HOST=127.0.0.1
