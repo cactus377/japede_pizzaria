@@ -65,6 +65,12 @@ command -v pm2  >/dev/null || { log "Instalando PM2…";  npm i -g pm2;  }
 if [[ -d "$APP_DIR/.git" ]]; then
   log "Repositório encontrado, executando git pull…"
   git -C "$APP_DIR" pull --ff-only
+elif [[ -d "$APP_DIR" ]]; then
+  log "Diretório $APP_DIR já existe mas não contém um repositório Git válido; removendo…"
+  sudo rm -rf "$APP_DIR"
+  log "Clonando repositório em $APP_DIR…"
+  sudo git clone "$REPO_URL" "$APP_DIR"
+  sudo chown -R "$(whoami)":"$(whoami)" "$APP_DIR"
 else
   log "Clonando repositório em $APP_DIR…"
   sudo git clone "$REPO_URL" "$APP_DIR"
